@@ -1,0 +1,45 @@
+##
+## Options to compile using ifort under Linux system
+##
+
+f90=ifort
+optf90=-O3 -heap-arrays
+optf77=-O3 -heap-arrays
+optdir=-I
+mkl=-lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -openmp -lpthread
+mkldist= -Wl,--start-group /lib/intel64/libmkl_intel_lp64.a /lib/intel64/libmkl_intel_thread.a /lib/intel64/libmkl_core.a -Wl,--end-group -openmp -lpthread -static-intel
+
+#f90=ifort
+#optf90=-heap-arrays -O3
+#optf77=-heap-arrays -O3
+#optf90=-heap-arrays -check all -traceback -g
+#optf77=-heap-arrays -check all -traceback -g
+#optdir=-I
+#libf77=-lU77
+
+##
+## Options to compile using gfortran under Linux system
+##
+
+#f90 = gfortran
+#optf90 = -O0 -fno-backtrace
+#optf90 = -O3 -ffree-line-length-none
+#optf77 = -O3
+#optdir = -I
+#openmp = -fopenmp
+#fpp = -cpp
+#parallel=
+#linkopt = -L../libs -static-libgfortran
+#mkl = -lreflapack -lrefblas
+#mkldist = -lreflapack -lrefblas
+
+# If you have MKL and would like to use it,
+# please uncomment the following two lines.
+# mkl = -Wl,--start-group $(MKLROOT)/lib/intel64/libmkl_intel_lp64.a $(MKLROOT)/lib/intel64/libmkl_intel_thread.a $(MKLROOT)/lib/intel64/libmkl_core.a -Wl,--end-group -lpthread -lm
+# mkldist = -Wl,--start-group $(MKLROOT)/lib/intel64/libmkl_intel_lp64.a $(MKLROOT)/lib/intel64/libmkl_intel_thread.a $(MKLROOT)/lib/intel64/libmkl_core.a -Wl,--end-group -lpthread -lm
+
+#  DEBUG: Please uncomment the following 2 lines when you
+#         perform debugging the programs. This options make
+#         programs very slow. Use it just for checks.
+# optf90 = -ffree-line-length-none -g -Wall -fbounds-check -fbacktrace -ffpe-trap=invalid,zero,overflow
+# optf77 = -ffixed-line-length-none -g -Wall -fbounds-check -fbacktrace -ffpe-trap=invalid,zero,overflow

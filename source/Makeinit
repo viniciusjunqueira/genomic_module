@@ -1,0 +1,13 @@
+f90=ifort
+optf90=-O3 -heap-arrays
+optf77=-O3 -heap-arrays
+optdir=-I
+mkl=-lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -qopenmp -lpthread
+mkldist= -Wl,--start-group /lib/intel64/libmkl_intel_lp64.a /lib/intel64/libmkl_intel_thread.a /lib/intel64/libmkl_core.a -Wl,--end-group -openmp -lpthread -static-intel
+#mkl = -mkl
+mkldist = -mkl -openmp -parallel -static-intel
+openmp = -qopenmp
+fpp = -fpp
+parallel = -parallel
+linkopt =
+
