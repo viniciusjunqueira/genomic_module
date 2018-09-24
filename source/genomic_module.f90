@@ -21,7 +21,7 @@ integer :: num_thread,nthrg
 
 integer :: lwork,info,lda
 real :: temp(1),t1,t2,val
-character :: jobz='N',uplo='U'
+character :: uplo='U'
 real, allocatable :: ww(:),rand(:)
 real, allocatable :: work(:,:)
 logical :: wantz
@@ -47,9 +47,9 @@ print*,'*******************************'
 !$omp end parallel
 !$ print'(a35,i10,a)','OMP activated using = ',TID,' Threads'
 
-print '(a35,i10)','Number of genotyped individuals = ',nid
-print '(a35,i10)','Position of first SNP = ',BegSNP
-print '(a35,i10)','Number of genotypes = ',LastSNP
+print '(a35,i10)',ADJUSTL('Number of genotyped individuals = '),nid
+print '(a35,i10)',ADJUSTL('Position of first SNP = '),BegSNP
+print '(a35,i10)',ADJUSTL('Number of genotypes = '),LastSNP
 print*,''
 
 
@@ -68,6 +68,8 @@ call createG_dense_symm(gen,Z,G,W,k,nid,LastSNP)
 
 ! Store A in Ainv to prevent it from being overwritten by LAPACK
 Gi=G
+print*,' G(1,1) = ',G(1,1),' Gi(1,1) = ',Gi(1,1)
+print*,''
 
 call cpu_time(t1)
 ! DGETRF computes an LU factorization of a general M-by-N matrix A using partial pivoting with row interchanges.
@@ -76,7 +78,8 @@ print '(a)', 'Decomposing genomic matrix...'
 call DPOTRF( UPLO, nid, Gi, LDA, INFO )
 
 if (info /= 0) then
- stop 'Matrix is numerically singular!'
+    print*,' INFO variable =',info
+    stop ' Matrix is numerically singular!'
 end if
 
 ! DGETRI computes the inverse of a matrix using the LU factorization computed by DGETRF.
@@ -179,23 +182,29 @@ end do
 do i=1,n
     do j=1,n
         do l=1,snp
-            if (i==j) then
-                G(i,j)=G(i,j)+Z(i,l)*Z(j,l)*wOmega+(1.-wOmega)*1.
-            else
-                G(i,j)=G(i,j)+Z(i,l)*Z(j,l)*wOmega
-            endif
+            G(i,j)=G(i,j)+Z(i,l)*Z(j,l)
         end do
     end do
 end do
 do i=1,n
     do j=1,n
         G(i,j)= G(i,j)/sqrt(k(i)*k(j))
-        if(i<=j) write(io_save,fmt="(2i,f11.3)") i,j,G(i,j)
+        if (i<=j) write(io_save,fmt="(2i,f11.3)") i,j,G(i,j)
     end do
-    if(n < 11) print '(10f10.2)', G(i,:)
+    if (n < 11) print '(10f10.2)', G(i,:)
 end do
 ! ====================================================================
 call cpu_time(t2)
+
+! scaling
+print*, 'Scaling G matrix'
+do i=1,n
+    do j=1,n
+        G(i,j) = G(i,j) * wOmega
+        if (i==j) G(i,j) = G(i,j) + (1-wOmega)*2
+    enddo
+enddo
+
 print '(a35,f10.2)', 'Time to construct G = ',t2-t1
 close(io_save)
 end subroutine
