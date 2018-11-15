@@ -1,49 +1,68 @@
 rm(list=ls())
 setwd("/Users/vinicius/opt/genomic_module/source/")
 
-
+#
+# Loading unsorted pedigree
+#
 (ped <- read.table('unsort.ped'))
 
-n = nrow(ped)
-pedr = matrix(data = 0, nrow = n, ncol = 3)
-gen = tgen = perm = iperm = rep(1,n)
+#
+# Initiatlizating needed variables
+#
+n=nrow(ped)
+gen=tgen=perm=iperm=rep(1,n)
 miss=1
 
-## Gen count
+#
+# Step that computes 'generic' indices for each animal based on progeny. This is useful
+# to sort individuals
+#
 while(TRUE){
   flag1 = sum(gen)
   for(i in 1:n){
     indv = ped[i,1]
     sire = ped[i,2]
     dam  = ped[i,3]
-
     # sire
-    if (sire > 0) {
+    if (sire > 0){
       if( gen[indv] >= gen[sire] ) gen[sire]=gen[sire]+1
     }
-
     # dam
-    if (dam > 0) {
+    if (dam > 0){
       if( gen[indv] >= gen[dam] ) gen[dam]=gen[dam]+1
     }
   }
-  
   flag2=sum(gen)
   if (flag1==flag2) break
   miss=miss+1
-  if(miss>50) stop("circular pedigree!!")
+  if(miss>50) stop(" circular pedigree!! ")
 }
-for(i in 1:n){
-  tgen[i]=gen[ped[i,1]]
+tgen=gen[ped[,1]]
+
+#
+# Organize indices to be in needed order
+#
+bool=rep(F,n)
+Beg=max(tgen)
+curr=1
+indices=rep(0,n)
+while(TRUE){
+  if(all(bool)) break
+  idx = which(tgen == Beg)
+  bool[idx] = TRUE
+  indices[idx] = curr:(curr+length(idx)-1)
+  curr=max(indices)+1
+  Beg=Beg-1
 }
+indices=order(tgen, decreasing = TRUE)
+ped=ped[indices,]
 
-idx = order(tgen, decreasing = T)
-ped = ped[idx,]
-
-## recod
+#
+# Recode pedigree based on pre-defined order
+#
 for(i in 1:n){
   id=ped[i,1]
-  iperm[i]=id
-  perm[id]=i
+  iperm[i]=id # Original identification
+  perm[id]=i  # Recoded identification
 }
 
