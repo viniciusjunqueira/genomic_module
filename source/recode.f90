@@ -15,7 +15,7 @@ read*, ped_file
 ! pedigree file, allow for more than one pedigree
 !
 print '(a)',"Reading pedigree..."
-open(io_off,file=ped_file)
+open(unit=io_off, file=ped_file, ACTION="read")
 n=0;
 do
     read(io_off,*,iostat=io) ped(j,:)
@@ -37,12 +37,14 @@ nindex=.false.
 !
 do j=1,n
     read(io_off,*) ped(j,:)    
-    !print*,ped(j,:)
+    if (j<6) print*,ped(j,:)
 enddo
+print*,''
 
 ! Step that computes 'generic' indices for each animal based on progeny. This is useful
 ! to sort individuals
 !
+print '(a)',"Counting generations..."
 do
     top=sum(gen)
     do i=1,n
@@ -72,6 +74,7 @@ tgen=gen(ped(:,1))
 !
 ! Organize indices to be in needed order
 !
+print '(a)',"Sorting indices..."
 Beg=maxval(tgen)
 curr=1
 do
@@ -89,6 +92,7 @@ ped=ped(indices,:)
 !do i=1,n
 !    print*, ped(indices(i),:)
 !enddo
+!print*,''
 
 !
 ! Recode pedigree based on pre-defined order
@@ -98,7 +102,5 @@ do i=1,n
   iperm(i)=id ! Original identification
   perm(id)=i  ! Recoded identification
 enddo
-
-
 
 end program
