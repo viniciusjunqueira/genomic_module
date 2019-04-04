@@ -1,38 +1,58 @@
 program genomic
 use mkl_service
+use model; use sparsem
+!use gibbs;
+!use prob; use pcg; use textop; use ranlib
+!use omp_lib
 
 implicit none
 
 
-character :: version*5= "1.000"
-character (len=100) :: a, gen_file = "../examples/ex1/deltag.gen_clean", gen_index="../examples/ex1/deltag_50K_imp.gen_clean_XrefID"
+character (len=100) :: a, gen_file = "../examples/ex1/deltag_50K_imp.gen_clean", gen_index="../examples/ex1/deltag_50K_imp.gen_clean_XrefID",&
+                          ped_file = "../examples/ex1/renadd01.ped"
+!character (len=100) :: a, gen_file = "genotypes.gen", gen_index="genotypes.gen_XrefID",&
+!                          ped_file = "pedigree.ped"
+
+
+type (sparse_hashm) :: xx
+type (sparse_ija) :: xx_ija
+type(sparse_hashm), allocatable :: ainv(:)
+type(sparse_ija), allocatable :: ainv_ija(:)
+integer,allocatable:: ped(:,:,:)  ! pedigree data (could be multiple pedigrees)
+integer,allocatable:: address(:,:),&    ! start and address of each effect
+                      df_random(:)
+
+
+character(5) :: version= "1.000"
 real     ::  wGimA22i =  1.d0,&     
              wGi      =  1.d0,&    
              wA22i    = -1.d0,&
-             wOmega    =  0.95  
+             wOmega    =  0.90
 logical :: sameweights
 
 integer :: whichH=0, io_g=10, io_i, io, i, j, l, BegSNP, LastSNP, nid
 integer :: num_snp=80000, len_char=50
-real, allocatable :: G(:,:), gen(:,:), W(:,:), Z(:,:), k(:), Gi(:,:)
+!real (rh), allocatable :: G(:,:), gen(:,:), W(:,:), Z(:,:), k(:), Gi(:,:)
+real (rh), allocatable :: gen(:,:), W(:,:), Z(:,:), k(:), Gi(:,:)
+
 
 ! mkl
 integer :: num_thread,nthrg
 
-integer :: lwork,info,lda
-real :: temp(1),t1,t2,val
-character :: uplo='U'
-real, allocatable :: ww(:),rand(:)
-real, allocatable :: work(:,:)
-logical :: wantz
+
+!integer :: lwork,info,lda
+real (rh) :: temp(1),t1,t2,val
+!character :: uplo='U'
+!real (rh), allocatable :: ww(:), rand(:)
+!real (rh), allocatable :: work(:,:)!, work1(:)
 INTEGER :: NTHREADS, TID, OMP_GET_NUM_THREADS, OMP_GET_THREAD_NUM,&
            omp_get_max_threads
 integer, allocatable :: ipiv(:,:)
+integer :: unit_xref = 123
 
 
 
-
-open(io_g,file=gen_file)
+open(io_g, file=gen_file)
 call read_first_and_last_snp(nid,BegSNP,LastSNP)
 
 print*,''
@@ -47,104 +67,268 @@ print*,'*******************************'
 !$omp end parallel
 !$ print'(a35,i10,a)','OMP activated using = ',TID,' Threads'
 
-print '(a35,i10)',ADJUSTL('Number of genotyped individuals = '),nid
-print '(a35,i10)',ADJUSTL('Position of first SNP = '),BegSNP
-print '(a35,i10)',ADJUSTL('Number of genotypes = '),LastSNP
+print '(a35,i10)','Number of genotyped individuals = ',nid
+print '(a35,i10)','Position of first SNP = ',BegSNP
+print '(a35,i10)','Number of genotypes = ',LastSNP
 print*,''
 
+!allocate( lenped(1) )
+!neff=1
+!lenped(neff)=12668
+!print*,'here'
+!allocate ( ainv(neff), ainv_ija(neff), df_random(neff), ped(neff,maxval(lenped),3) )
+!print*,'here'
+allocate( Gi(nid,nid), gen(nid,LastSNP), W(3,lastsnp), Z(nid,LastSNP), k(LastSNP) )
+!allocate( gen(nid,lastsnp), k(lastsnp) )
+!allocate( rand(nid) )
+!lda=max(1,nid); lwork=max(1,3*nid-1)
 
-allocate( G(nid,nid), Gi(nid,nid), gen(nid,LastSNP), W(3,LastSNP), Z(nid,LastSNP), k(LastSNP) )
-allocate( rand(nid) )
-lda=max(1,nid)
-allocate( ipiv(nid,1) )
-allocate( work(nid,1) )
+!allocate( ipiv(nid,1) )
+!allocate( work(nid,1), work1(max(1,lwork)) )
+!work1=0
+
+! pedigree file, allow for more than one pedigree
+!open(io_off,file=trim(ped_file))
+!print*,'here'
+!do i=1, neff
+!    !print*,'here'
+!    do j=1, lenped(i)
+!        read(io_off,*,iostat=io) ped(i,j,:)
+!        !print*,ped(i,j,:)
+!    enddo
+!enddo
+!print*,'until here'
+
+	! Random effects' contributions
+!do i=1,neff
+!    call add_g_add(g_A,i)
+!enddo
 
 
-call read_markers(gen,nid,BegSNP,LastSNP)
+call read_markers(gen, nid, BegSNP, LastSNP)
 call createk(gen,nid,k)
 call createW(gen,W,nid,LastSNP)
-call createG_dense_symm(gen,Z,G,W,k,nid,LastSNP)
-
+call createG_dense_symm(gen,Z,Gi,W,k,nid,LastSNP)
 
 ! Store A in Ainv to prevent it from being overwritten by LAPACK
-Gi=G
-print*,' G(1,1) = ',G(1,1),' Gi(1,1) = ',Gi(1,1)
+!Gi=Genomic
+!print*,'Original G(1,1) = ',G(1,1),' Gi(1,1) = ',Gi(1,1)
+!print*,'Original G(1,2) = ',G(1,2),' Gi(1,2) = ',Gi(1,2)
+!call create_Gi(n=nid, snp=LastSNP, X=Gi)
+call create_gima22(gi)
+
+
+contains
+
+
+subroutine create_gima22(m)
+implicit none
+
+real(rh) :: m(:,:)
+integer :: irank,i
+
+!do i=1,size(m,1)
+!    print*, m(i,:)
+!enddo
+!print*,''
+call ginv1(m,size(m,1),size(m,1),real(1d-12,rh),irank)
+
+print*,'Inverting genomic matrix'
+do i=1,size(m,1)
+   print*, m(i,:)
+enddo
+
+end subroutine
+
+
+
+! Read cross reference file
+!subroutine read_xref_file
+!integer :: i,io
+!do i=1,nsamples
+!    read(unit_xref,*,iostat=io) xref(i,:)
+!enddo
+!end subroutine
+
+
+
+! Algorithm from Ignacio JABS (2011)
+!subroutine compute_A22(ped)
+!real(rh) :: f(nped),w(nped),v(nped),tmp(nsamples,nsamples)
+!integer :: i,irank,ped(:,:)
+!call zerom(A22i,nsamples)
+!f=0;A22=0
+!n=nped
+!do i=1,nsamples
+!    v=0;w=0
+!    v(perm(xref(i,1)))=1
+!    call A_times_v(w,v,ped,f)
+!    A22(:,i)=w(perm(xref(:,1)))    
+!enddo
+!call printmat(A22)
+!tmp=A22
+!call ginv1(tmp,size(tmp,1),size(tmp,1),real(1d-12,rh),irank)
+!do i=1,nsamples
+!    do j=i,nsamples
+!        val=tmp(i,j)
+!        if(val/=0) then
+!            call setm(val,i,j,A22i); call setm(val,j,i,A22i)
+!        endif
+!    enddo
+!enddo
+!call printm(A22i)
+!end subroutine
+
+! Algorithm from Ignacio JABS (2011)
+subroutine A_times_v(w,v,ped,f)
+integer :: i,s,d,n,ped(:,:)
+real(rh) :: w(:),v(:),f(:),tmp,di
+real(rh), allocatable :: q(:)
+
+n=size(w)
+allocate(q(n))
+q=0
+do i=n, 1, -1
+    q(i)=q(i)+v(i)
+    s=ped(i,2); d=ped(i,3)
+    if(s/=0) q(s)=q(s)+q(i)*0.5
+    if(d/=0) q(d)=q(d)+q(i)*0.5
+enddo
+
+do i=1,n
+    s=ped(i,2); d=ped(i,3)
+    di=(count(ped(i,2:3)==0)+2)/4.d0 - 0.25*(f(s)+f(d))
+    tmp=0
+    if(s/=0)tmp=tmp+w(s)
+    if(d/=0)tmp=tmp+w(d)
+    w(i)=0.5*tmp
+    w(i)=w(i)+di*q(i)
+enddo
+deallocate(q)
+end subroutine
+
+
+
+
+! Function that compute variance of a vector
+function var(x) result(c)
+implicit none
+real (rh) :: x(:),c,mu
+integer :: i
+
+! Mean
+mu=sum(x)/size(x)
+! Sum of Squares
+do i=1,size(x)
+  c=c+(x(i)-mu)**2
+end do 
+c=c/size(x)
+
+end function
+
+
+
+subroutine create_Gi(n,snp,X)
+implicit none
+
+real (rh), intent(inout) :: X(:,:)
+integer :: n,snp,info
+real (rh) ::  work(n)
+
+work=0
+
+print*,'X row and column dim = ',size(X,1),size(X,2)
+print*,'work array dim = ',size(work)
+
+call cpu_time(t1)
+write(*,'(a)') 'Computing eigenvalues...'
+call DSYEV_F90(X, work)
+call cpu_time(t2)
+print '(a35,f10.2)', 'Time to compute eigenvalues  = ',t2-t1
+
+print*,''
+write(*,'(a)') 'Eigenvalues'
+write(*,'(a,f15.6)') 'Minimum = ', minval(work)
+write(*,'(a,f15.6)') 'Average = ', sum(work)/size(work)
+write(*,'(a,f15.6)') 'Maximum = ', maxval(work)
+write(*,'(a,f15.6)') 'SD      = ', sqrt(var(work))
+
+! Save eigenvalues
+open(100,file="eigen")
+write(*,'(a)') 'Saving eigenvalues...'
+do i=1,n
+  write(100,'(f15.6)') work(i)
+end do
 print*,''
 
 call cpu_time(t1)
 ! DGETRF computes an LU factorization of a general M-by-N matrix A using partial pivoting with row interchanges.
-!call DGETRF(n, n, xinv, n, ipiv, info)
-print '(a)', 'Decomposing genomic matrix...'
-call DPOTRF( UPLO, nid, Gi, LDA, INFO )
+!print '(a)', 'Decomposing genomic matrix...'
+!call DGETRF(nid, nid, Gi, nid, ipiv, info)
+!call DPOTRF( UPLO, nid, Gi, LDA, INFO )
+call cpu_time(t2)
+print '(a35,f10.2)', 'Time to factorize matrix  = ',t2-t1
 
 if (info /= 0) then
     print*,' INFO variable =',info
     stop ' Matrix is numerically singular!'
 end if
+!print*,'LU G(1,1) = ',G(1,1),' Gi(1,1) = ',Gi(1,1)
+!print*,'LU G(1,2) = ',G(1,2),' Gi(1,2) = ',Gi(1,2)
 
+call cpu_time(t1)
 ! DGETRI computes the inverse of a matrix using the LU factorization computed by DGETRF.
-!call DGETRI(n, Gi, n, ipiv, work, n, info)
-print '(a)', 'Inverting genomic matrix...'
-call DPOTRI( UPLO, nid, Gi, LDA, INFO )
+!print '(a)', 'Inverting genomic matrix...'
+!call DGETRI(nid, Gi, nid, ipiv, work, nid, info)
+!call DPOTRI( UPLO, nid, Gi, LDA, INFO )
 call cpu_time(t2)
-print '(a35,f10.2)', 'Time to compute genomic inverse  = ',t2-t1
+print '(a35,f10.2)', 'Time to compute inverse  = ',t2-t1
 
-if (info /= 0) then
- stop 'Matrix inversion failed!'
-end if
+!if (info /= 0) then
+! stop 'Matrix inversion failed!'
+!end if
+!print*,'Inv G(1,1) = ',G(1,1),' Gi(1,1) = ',Gi(1,1)
+!print*,'Inv G(1,2) = ',G(1,2),' Gi(1,2) = ',Gi(1,2)
 
-open(40, file="Gi", status='replace')
+open(40, file="Gi")
 do i=1,nid
     do j=1,nid
-        if(i<=j) write(40,fmt="(2i,f11.3)") i,j,Gi(i,j)
+        if(i<=j) write(40,*) i,j,Gi(i,j)
     enddo
 end do
-
-
-
-contains
-
-subroutine createGi(G)
-implicit none
-
-real :: G(:,:)
-
-
-
-
 end subroutine
 
 
 
 real function freq(values,n) result(x)
 integer :: i,j,n
-real :: f,values(:),np,npq,nmiss=0
-np = count(values==2.)
+real (rh) :: f,values(:),np,npq,nmiss=0
+np = count(values==0.)
 npq = count(values==1.)
 nmiss = count(values==5.)
 x = (np + npq*.5)/(n-nmiss)
 end function
 
 
+! Subroutine to create a vector of 2pq
 subroutine createk(m,n,k)
 implicit none
-real :: m(:,:), k(:), p,q,pq,val=0
+real (rh) :: m(:,:), k(:), p, q, pq, val
 integer :: i,j,n,io_save=20
 
-open(io_save,file="allele_freq")
+!open(io_save,file="allele_freq")
 print '(a)', 'Creating scaling (k) vector'
 call cpu_time(t1)
-!do i=1,n
+do i=1,n
     p=0;val=0
     do j=1,size(m,2)
-        p=freq(m(:,j),size(m,1)); q=1-p
-        write(io_save,fmt="(5f15.3)"), p,q,p*q,2*p*q
-        val=val+p*q
+        p=freq(m(:,j),size(m,1))
+        q=1-p
+        !write(io_save,fmt="(5f15.3)"), p,q,p*q,2*p*q
+        val=val+2*p*q
     enddo
-    !k(i) = val
-    k=2*val
-    !write(io_save,fmt="(5f15.3)"), p,(1-p),p*(1-p),2*p*(1-p)!,k(i)
-!enddo
+    k(i) = val
+enddo
 call cpu_time(t2)
 print '(a35,f10.2)', 'Time to compute k  = ',t2-t1
 close(io_save)
@@ -153,7 +337,7 @@ end subroutine
 
 subroutine createW(m,W,n,snp)
 implicit none
-real :: m(:,:), W(:,:), val
+real (rh) :: m(:,:), W(:,:), val
 integer :: n,snp,i
 
 do i=1,snp
@@ -166,7 +350,7 @@ end subroutine
 subroutine createG_dense_symm(m,Z,G,w,k,n,snp)
 implicit none
 integer  :: i,j,n,l,snp
-real :: val, W(:,:), m(:,:), G(:,:), Z(:,:), k(:)
+real (rh) :: val, W(:,:), m(:,:), G(:,:), Z(:,:), k(:),diag,ofdiag
 integer :: io_save=30
 
 open(io_save,file="G",status='replace')
@@ -193,6 +377,7 @@ do i=1,n
     end do
     if (n < 11) print '(10f10.2)', G(i,:)
 end do
+
 ! ====================================================================
 call cpu_time(t2)
 
@@ -200,21 +385,35 @@ call cpu_time(t2)
 print*, 'Scaling G matrix'
 do i=1,n
     do j=1,n
-        G(i,j) = G(i,j) * wOmega
-        if (i==j) G(i,j) = G(i,j) + (1-wOmega)*2
+        G(i,j) = G(i,j) * .95
+        if (i==j) G(i,j) = G(i,j) + .05
     enddo
 enddo
+
+! matrix statistics
+!diag=0; ofdiag=0
+!do i=1,n
+!    do j=i,n
+!        if(i==j) then
+!            diag=diag+G(i,j)
+!        else
+!            ofdiag=ofdiag+G(i,j)
+!        endif
+!    enddo
+!enddo
+
+!print '(a,f5.2)','Diagonal mean     =',diag/n
+!print '(a,f5.2)','Off Diagonal mean =',ofdiag/((n**2-n)/2)
 
 print '(a35,f10.2)', 'Time to construct G = ',t2-t1
 close(io_save)
 end subroutine
 
-
 ! Subroutine that reads genotype file as character and converts it into reale
 subroutine read_markers(x,n,first_snp,nsnp)
 implicit none
 
-real :: x(:,:)
+real (rh) :: x(:,:)
 integer :: n,i,j,pos,snp,first_snp,nsnp
 character(len=num_snp) :: line
 character(len=1) :: a
@@ -274,6 +473,93 @@ enddo
 UpdatePOS = curPos
 end function
 
+
+
+  subroutine add_g_add(type,eff)
+! generates contributions for additive sire or animal effects
+  integer :: type,eff,i,j,t1,t2,k,l,m,n,io,p(4),ped_len,iped
+  real (rh) :: w(3),res(4),mendel
+!
+ 
+  select case (type)
+     case (g_A)
+        w=(/1., -.5, -.5/)
+        res=(/2., 4/3., 1., 0./)
+        ped_len=3
+     case (g_A_UPG)
+        w=(/1., -.5, -.5/)
+        res=(/2., 4/3., 1., 0./)
+        !ped_len=4
+        ped_len=3                ! VJ - pedigree is allocated as a three-dimensional matrix = ped(eff,length,3)
+     case (g_A_UPG_INB)
+        w=(/1., -.5, -.5/)
+        ped_len=4
+     case (g_As)
+        w=(/1., -.5, -.25/)
+        res=(/16/11., 4/3., 16/15., 1./)
+        ped_len=3
+  end select
+
+  if (round == start) call zerom(ainv(eff),maxval(lenped))
+
+  do iped=1, lenped(eff)
+     p(1:ped_len)=ped(eff,iped,1:ped_len)
+     !p(4)=ms_stat(iped)                     ! VJ - intergen only read the first three columns and we need a fourth with the number
+                                            !      of known parents
+     select case (type)
+        case (g_A)
+            i=1; if(p(2)==0) i=i+1; if (p(3) == 0) i=i+1
+            mendel=res(i)
+        case (g_A_UPG)
+           mendel=res(p(4))
+        case (g_A_UPG_INB)
+           mendel=p(4)/1000.
+        case (g_As)
+            i=1; if(p(2)==0) i=i+2; if (p(3) == 0) i=i+1
+            mendel=res(i)
+     end select
+
+     ! generate A inverse
+     if (round ==start) then
+      do k=1,3
+         do l=1,3	
+            if (p(k) /=0 .and. p(l) /=0) then
+               call addm(w(k)*w(l)*mendel,p(k),p(l),ainv(eff))
+            endif
+         enddo
+      enddo
+     endif
+
+  enddo
+
+    if (round == start .and. fthr <= 1) print*,' read ',lenped(eff),' additive pedigrees'
+    if (lenped(eff) == 0) then
+       print*,'Additive pedigree file for effect ',eff,' empty'
+       stop
+    endif
+  
+    if (round ==start) df_random(eff)=lenped(eff)
+end subroutine
+
+
+
+  function address1(e,l,t)
+! returns address for level l of effect e and trait t
+  integer :: e,l,t, address1,i
+  logical,save::first=.true.
+  integer,allocatable,save::offset(:)
+  !
+  if (first) then
+     first=.false.
+     allocate(offset(neff))
+     do i=1,neff
+        offset(i)=sum(nlev(1:i-1))*ntrait
+     enddo
+  endif
+  !
+  address1= offset(e)+(l-1)*ntrait+t
+  !address1= sum(nlev(1:e-1))*ntrait+(l-1)*ntrait+t
+  end function
 
 
 end program
