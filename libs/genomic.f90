@@ -14,12 +14,15 @@ module genomic
 
 use kinds; use model; use textop; use sparsem
 use sparseop; use denseop; use prob; use pcg
+
 implicit none
 ! 
 character :: version*5= "1.000"
 real(r8) ::  wGimA22i =  1.d0,&     
              wGi      =  1.d0,&    
-             wA22i    = -1.d0      
+             wA22i    = -1.d0,&
+             wG       =  0.95,&
+             wA22     =  0.05 
 logical :: sameweights
 integer :: whichH=0
 
@@ -27,7 +30,8 @@ integer :: whichH=0
 ! storage matrices
 !
 type(densem),save :: A22i,Gi,GimA22i
-
+type(sparse_ija), save :: Gi_ija
+type(sparse_hashm), allocatable :: ainv(:)
 
 integer ::  io_g=10, io_i, io, i, j, l, begSNP, lastSNP, len_gen
 integer :: num_snp=80000, len_char=50
@@ -105,12 +109,10 @@ subroutine setup_genomic(eff, unit_eff)
    print '(a35,i10)','Number of genotypes = ',lastsnp
    print*,''
    
-   !allocate( lenped(1) )
-   !neff=1
-   !lenped(neff)=4
    allocate( gen(len_gen,lastsnp) )
    call create_Gi_dense_symm(gen,len_gen,begsnp,lastsnp)
-   
+   call createGmA22_densem(X=Gi,Y=ainv(neff),XmY=GimA22i,wx2=wGi,wy2=wA22i)
+
 
 end subroutine
 
@@ -118,7 +120,7 @@ end subroutine
 subroutine create_Gi_dense_symm(x,n,pos1,pos2)
    implicit none
    real(rh) :: x(:,:)
-   integer :: n,pos1,pos2
+   integer :: n,pos1,pos2,irank
    integer  :: i,j,l
    real (rh) :: val
    integer :: io_save=30
@@ -126,13 +128,13 @@ subroutine create_Gi_dense_symm(x,n,pos1,pos2)
    allocate( w(3,pos2), Z(n,pos2), k(pos2) )
    
    call zerom(Gi,n)
-   
-   call read_markers(x, n, pos1, pos2)
+   call zerom(GimA22i,n)
 
+   call read_markers(x, n, pos1, pos2)
    call createk(x,n,k)
    call createW(x,W,n,pos2)
 
-   open(io_save,file="G",status='replace')
+   !open(io_save,file="G",status='replace')
    print '(a)', 'Creating genomic matrix...'
    call cpu_time(t1)
    Z=0
@@ -151,31 +153,31 @@ subroutine create_Gi_dense_symm(x,n,pos1,pos2)
       do j=1,n
          val = getm(i,j,Gi)/sqrt(k(i)*k(j))
           call setm(val,i,j,Gi)
-         if (i<=j) write(io_save,fmt="(2i,f11.3)") i,j, getm(i,j,Gi)
+         !if (i<=j) write(io_save,fmt="(2i,f11.3)") i,j, getm(i,j,Gi)
       end do
    end do
-
-   ! ====================================================================
    call cpu_time(t2)
-
-   ! scaling
-   !print*, 'Scaling G matrix'
-   !do i=1,n
-   !    do j=1,n
-   !        !G(i,j) = G(i,j) * .95
-   !        val = getm(i,j,Gi) * .95
-   !        call setm(val,i,j,Gi)
-   !        !if (i==j) G(i,j) = G(i,j) + .05
-   !        if (i==j) then
-   !         val = getm(i,j,Gi) + .05
-   !         call setm(val,i,j,Gi)
-   !        endif
-   !    enddo
-   !enddo
-   print '(a35,f10.2)', 'Time to construct G = ',t2-t1
-   if(n <= 10) call printm(Gi)
-   close(io_save)
+   !close(io_save)
    
+   !print*, 'Scaling G matrix'
+   do i=1,len_gen
+       do j=1,len_gen
+           val = getm(i,j,Gi) * wG
+           call setm(val,i,j,Gi)
+           if (i==j) then
+            val = getm(i,j,Gi) + wA22
+            call setm(val,i,j,Gi)
+           endif
+       enddo
+   enddo
+   
+   Gi_ija = Gi
+   call fspak90('invert', Gi_ija)
+   Gi = Gi_ija
+   call reset(Gi_ija)
+
+   print '(a35,f10.2)', 'Time to construct G = ',t2-t1
+   !if(n <= 10) call printm(Gi)
 
 end subroutine
 
@@ -353,16 +355,37 @@ endsubroutine
 subroutine createGmA22_densem(X,Y,XmY,w2,wx2,wy2)
    ! creates Matrix Adelta (wx*X + wy*Y)*w in densem format
    !
-   type(densem) :: X,Y,XmY
+   ! X   = Gi;  wx2 = wGi
+   ! Y   = A22; wy2 = wA22i
+   ! XmY = GimA22i
+
+   !type(densem) :: X,Y,XmY
+   type(densem) :: X,XmY
+   type(sparse_hashm) :: Y
    integer  :: i,j,n
    real(r8) :: val,w,wx,wy
    real(r8), optional :: w2,wx2,wy2
    real :: t1
+
+   do i=1,len_gen
+      do j=i,len_gen         
+         val = getm(i,j,X)*wx2 + getm(xref(i),xref(j),Y)*wy2
+         call setm(val,i,j,XmY); if(i/=j)call setm(val,j,i,XmY)
+      enddo
+   enddo
+
+   !print*,''
+   !print*, 'Ainv'
+   !call printm(Y)
+
+   !print*,''
+   !print*, 'GimA22i'
+   !call printm(XmY)
+
 endsubroutine
 
 subroutine createGmA22_sparse_hashm(X,Y,XmY,w2,wx2,wy2)
    ! creates Matrix Adelta (wx*X + wy*Y)*w in hashm format
-   ! 
    type(densem) :: X,Y
    type(sparse_hashm) :: XmY
    integer  :: i,j,n
@@ -370,6 +393,7 @@ subroutine createGmA22_sparse_hashm(X,Y,XmY,w2,wx2,wy2)
    real(r8), optional :: w2,wx2,wy2
    real :: t1
    !
+
 endsubroutine
 
 ! Subroutine that computes the number of markers and samples
@@ -378,7 +402,6 @@ implicit none
 character(len=num_snp) :: line
 integer :: n, beg, bot, curr_pos
 
-print*,n
 do i=1, n
   read(io_g, fmt='(a)', iostat=io) line
   if (i == 1) then
