@@ -1,4 +1,4 @@
-program gen1234
+program genomic_module
 use mkl_service
 use kinds; use model;use sparsem; use sparseop; use pcg; use textop; use genomic
 !use omp_lib
@@ -10,18 +10,12 @@ implicit none
 
 type(sparse_hashm) :: xx,GimA22
 type(sparse_ija) :: xx_ija,GimA22_ija
-type(sparse_hashm), allocatable :: ainv(:)
 type(sparse_ija), allocatable :: ainv_ija(:)
 integer,allocatable:: ped(:,:,:)        ! pedigree data (could be multiple pedigrees)
 integer,allocatable:: address(:,:),&    ! start and address of each effect
                       df_random(:)
 
-!logical :: sameweights
 logical :: is_genomic=.false.,i_genotyped=.false.,j_genotyped=.false.
-
-!real (rh), allocatable :: gen(:,:), W(:,:), Z(:,:), k(:)!, Gi(:,:)
-!real (rh) :: temp(1),t1,t2,val
-
 
 ! mkl
 integer :: num_thread,nthrg
@@ -39,78 +33,43 @@ print*,''
 print*,''
 
 
+allocate( lenped(1) )
+neff=1
+lenped(neff)=4
+allocate ( ainv(neff), ainv_ija(neff), df_random(neff), ped(neff,maxval(lenped),3) )
+
+
+ped_file = 'pedigree.ped'
+
+! pedigree file, allow for more than one pedigree
+open(io_off,file=ped_file)
+do i=1, neff
+    do j=1, lenped(i)
+        read(io_off,*,iostat=io) ped(i,j,:)
+    enddo
+    print*, ped(i,:,:)
+enddo
+
+! Random effects' contributions
+do i=1,neff
+    call add_g_add(g_A,i)
+enddo
+
+
 call defaults_and_checks_GS
 is_genomic=.true.
 
 
-!gen_file = "genotypes.gen"
-!g_xref = "genotypes.gen_XrefID"
-!ped_file = "pedigree.ped"
-
-!open(unit_xref, file=g_xref)
-!open(io_g, file=gen_file)
-
-!stop
-
-!call read_first_and_last_snp(nid,begsnp,lastsnp)
-
-!print '(a35,i10)','Number of genotyped individuals = ',nid
-!print '(a35,i10)','Position of first SNP = ',begsnp
-!print '(a35,i10)','Number of genotypes = ',lastsnp
-!print*,''
-
-!stop
-
-!allocate( lenped(1) )
-!neff=1
-!lenped(neff)=4 !12668
-!allocate ( ainv(neff), ainv_ija(neff), df_random(neff), ped(neff,maxval(lenped),3) )
-!allocate( Gi(nid,nid) )
-!allocate( gen(nid,lastsnp) )
-
-!stop
-
-!w(3,lastsnp), Z(nid,lastsnp), k(lastsnp) )
-!allocate( gen(nid,lastsnp), W(3,lastsnp), Z(nid,lastsnp), k(lastsnp) )
-!call zerom(Gi,nid)
-!allocate( xref(nid) )
-
-!call read_xref_file(nid)
-!print*, xref
-
-! pedigree file, allow for more than one pedigree
-!open(io_off,file=ped_file)
-!do i=1, neff
-!    do j=1, lenped(i)
-!        read(io_off,*,iostat=io) ped(i,j,:)
-!    enddo
-!enddo
-
-! Random effects' contributions
-!do i=1,neff
-!    call add_g_add(g_A,i)
-!enddo
-
-!call read_markers(gen, nid, BegSNP, LastSNP)
-!call createk(gen,nid,k)
-!call createW(gen,W,nid,LastSNP)
-!call createG_dense_symm(gen,Z,Gi,W,k,nid,LastSNP)
-
 ! Store A in Ainv to prevent it from being overwritten by LAPACK
-!Gi=Genomic
-!call create_Gi(n=nid, snp=LastSNP, X=Gi)
-!call create_GimA22(gi)
-
-
-!call zerom(GimA22,lenped(neff))
-!do i=1,nid
-!    do j=i,nid
-!        !i_genotyped = xref(i)
-!        !j_genotyped = xref(j)
-!        val = Gi(i,j) - getm(xref(i),xref(j),ainv(neff))
-!        !print*,xref(i),xref(j),val
-!        call setm(val,xref(i),xref(j),GimA22)
-!        !print '(3f7.3)',Gi(i,j) , getm(xref(i),xref(j),ainv(neff)) , getm(xref(i),xref(j),GimA22)
+!do i=1,lenped(neff)
+!    do j=i,lenped(neff)
+        !i_genotyped = xref(i)
+        !j_genotyped = xref(j)
+        !print*, i, j, getm(i,j,ainv(neff))
+        !val = Gi(i,j) - getm(xref(i),xref(j),ainv(neff))
+        !print*,xref(i),xref(j),val
+        !call setm(val,xref(i),xref(j),GimA22)
+        !print '(3f7.3)',Gi(i,j) , getm(xref(i),xref(j),ainv(neff)) , getm(xref(i),xref(j),GimA22)
 !    enddo
 !enddo
 
