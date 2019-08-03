@@ -1,4 +1,5 @@
 program genomic_module
+!use omp_lib
 use mkl_service
 use kinds; use model;use sparsem; use sparseop; use pcg; use textop; use genomic
 !use omp_lib
@@ -6,10 +7,8 @@ use kinds; use model;use sparsem; use sparseop; use pcg; use textop; use genomic
 implicit none
 
 
-
-
-type(sparse_hashm) :: xx,GimA22
-type(sparse_ija) :: xx_ija,GimA22_ija
+type(sparse_hashm) :: xx !, GimA22
+type(sparse_ija) :: xx_ija !, GimA22_ija
 type(sparse_ija), allocatable :: ainv_ija(:)
 integer,allocatable:: ped(:,:,:)        ! pedigree data (could be multiple pedigrees)
 integer,allocatable:: address(:,:),&    ! start and address of each effect
@@ -35,7 +34,7 @@ print*,''
 
 allocate( lenped(1) )
 neff=1
-lenped(neff)=4
+lenped(neff)=12755
 allocate ( ainv(neff), ainv_ija(neff), df_random(neff), ped(neff,maxval(lenped),3) )
 
 
@@ -46,14 +45,18 @@ open(io_off,file=ped_file)
 do i=1, neff
     do j=1, lenped(i)
         read(io_off,*,iostat=io) ped(i,j,:)
+        !print*, ped(i,j,:)
     enddo
-    print*, ped(i,:,:)
+    
 enddo
+
 
 ! Random effects' contributions
 do i=1,neff
     call add_g_add(g_A,i)
 enddo
+!print*, ainv%n
+!stop
 
 
 call defaults_and_checks_GS
@@ -201,7 +204,7 @@ end do
 do i=1,n
     do j=1,n
         G(i,j)= G(i,j)/sqrt(k(i)*k(j))
-        if (i<=j) write(io_save,fmt="(2i,f11.3)") i,j,G(i,j)
+        !if (i<=j) write(io_save,fmt="(2i,f11.3)") i,j,G(i,j)
     end do
     if (n < 11) print '(10f10.2)', G(i,:)
 end do

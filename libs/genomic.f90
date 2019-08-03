@@ -11,7 +11,7 @@ module genomic
 !============================================================================================
 !
 !  
-
+!use omp_lib
 use kinds; use model; use textop; use sparsem
 use sparseop; use denseop; use prob; use pcg
 
@@ -19,32 +19,33 @@ implicit none
 ! 
 character :: version*5= "1.000"
 real(r8) ::  wGimA22i =  1.d0,&     
-             wGi      =  1.d0,&    
-             wA22i    = -1.d0,&
-             wG       =  0.95,&
-             wA22     =  0.05 
+             wGi      =  1.d0,&    ! tau
+             wA22i    = -1.d0,&    ! omega
+             wG       =  0.95,&    ! alpha
+             wA22     =  0.05      ! beta
 logical :: sameweights
 integer :: whichH=0
 
 !
 ! storage matrices
 !
-type(densem),save :: A22i,Gi,GimA22i
-type(sparse_ija), save :: Gi_ija
-type(sparse_hashm), allocatable :: ainv(:)
+type(densem),save :: A22i !,Gi, GimA22i
+type(sparse_ija), save :: Gi_ija, A22i_ija, GimA22i_ija
+type(sparse_hashm), allocatable :: Hinv, ainv(:)
 
-integer ::  io_g=10, io_i, io, i, j, l, begSNP, lastSNP, len_gen
+integer :: io_g=10, io_i, io, i, j, l, begSNP, lastSNP, len_gen
 integer :: num_snp=80000, len_char=50
 integer :: unit_xref = 123
 integer, allocatable :: xref(:)
 
 real (rh) :: temp(1),t1,t2,val
 
-real (rh), allocatable :: gen(:,:), W(:,:), Z(:,:), k(:)
+real (rh), allocatable :: gen(:,:), W(:,:), Z(:,:), k(:), Gi(:,:), GimA22i(:,:)
 
-character (len=100) :: a, gen_file,&! = "genotypes.gen",&
-                       g_xref,& !="genotypes.gen_XrefID",&
-                       ped_file! = "pedigree.ped"
+character (len=100) :: a,          &
+                       gen_file,   & ! = "genotypes.gen",&
+                       g_xref,     & !="genotypes.gen_XrefID",&
+                       ped_file      ! = "pedigree.ped"
 
 
 
@@ -92,12 +93,13 @@ subroutine setup_genomic(eff, unit_eff)
    print '(a)'      ,' *--------------------------------------------------------------*'     
    print*,''
    !print*,          '  * Not available in this distribution'
-   !stop
-
-   gen_file = "genotypes.gen"
-   g_xref = "genotypes.gen_XrefID"
+   
+   gen_file  = "genotypes.gen_clean"
+   g_xref    =  trim(gen_file) // "_XrefID"  !"genotypes.gen_XrefID"
    !ped_file = "pedigree.ped"
-
+   !print*, g_xref
+   !eff=1
+   
    open(unit_xref, file=g_xref)
    open(io_g, file=gen_file)
 
@@ -112,74 +114,192 @@ subroutine setup_genomic(eff, unit_eff)
    allocate( gen(len_gen,lastsnp) )
    call create_Gi_dense_symm(gen,len_gen,begsnp,lastsnp)
    call createGmA22_densem(X=Gi,Y=ainv(neff),XmY=GimA22i,wx2=wGi,wy2=wA22i)
-
+   call create_Hinv(n=lenped(eff), eff=eff)
 
 end subroutine
+
+
+subroutine create_Hinv(n,eff)
+! ! n = number of genotyped individuals
+! ! X = Hinv / sparse
+! ! Y = Ainv / sparse
+! ! Z = GimA22 / dense
+
+integer :: n, i, j, eff, lengen
+real(rh) :: val
+
+!allocate( Hinv(n )
+call zerom(Hinv,n)
+
+Hinv=ainv(eff)
+lengen = size(GimA22i,1)
+
+print*,'Creating Hinv matrix'
+do i=1,lengen
+   do j=1,lengen
+      val = GimA22i(i,j)
+      call addm(val, xref(i), xref(j), Hinv)
+   enddo
+enddo
+
+print*,'Saving Hinv...'
+open(101012,file="Hinv",status='replace')
+do i=1,n
+   do j=i,n
+      write(101012,fmt="(2i,f11.3)") xref(i), xref(j), getm(i,j,Hinv)
+   enddo
+enddo
+close(101012)
+
+end subroutine
+
+
+
+subroutine dense_inversion_mkl(A,n)
+   integer :: n
+   real :: t1,t2
+   real(rh), intent(inout) :: A(:,:)
+   real(rh) :: WORK(n)
+   integer :: IPIV(n)
+   integer :: info,error
+
+   print*,''
+   print '(a)', '------------------------------------------------------------'
+   print '(a)', 'Inversion performed using DGETR subroutines from MKL Library'
+   print '(a)', '------------------------------------------------------------'
+   print*,''
+
+   !print '(a)', 'Factoriz G matrix...'
+   call cpu_time(t1)
+   call dgetrf(n,n,A,n,IPIV,info)
+   if(info .ne. 0) then
+      write(*,*) "Factorization failed!"
+      stop
+   end if
+   call cpu_time(t2)
+   print '(a35,f10.2)', 'Time to factorize = ',t2-t1
+
+   call cpu_time(t1)
+   call dgetri(n,A,n,IPIV,WORK,n,info)
+   if(info .ne. 0) then
+      write(*,*) "Inversion failed!"
+      stop
+   end if
+   call cpu_time(t2)
+   print '(a35,f10.2)', 'Time for inversion = ',t2-t1
+end subroutine
+
 
 
 subroutine create_Gi_dense_symm(x,n,pos1,pos2)
    implicit none
    real(rh) :: x(:,:)
-   integer :: n,pos1,pos2,irank
+   integer :: n, pos1, pos2, irank
    integer  :: i,j,l
-   real (rh) :: val
+   real (rh) :: val, ALPHA, BETA
    integer :: io_save=30
 
-   allocate( w(3,pos2), Z(n,pos2), k(pos2) )
-   
-   call zerom(Gi,n)
-   call zerom(GimA22i,n)
+   allocate( w(0:2,pos2), Z(n,pos2), k(pos2) )
+   allocate( Gi(n,n), GimA22i(n,n) )
+   !call zerom(Gi,n)
+   !call zerom(GimA22i,n)
 
    call read_markers(x, n, pos1, pos2)
-   call createk(x,n,k)
-   call createW(x,W,n,pos2)
+   call createK(x,n)
+   call createW(x,n,pos2)
 
    !open(io_save,file="G",status='replace')
-   print '(a)', 'Creating genomic matrix...'
+   print '(a)', ' > Creating Z matrix...'
    call cpu_time(t1)
    Z=0
    do l=1,pos2
-      Z(:,l)=W(x(:,l)+1,l) ! centering column by gene content
+      Z(:,l)=W(x(:,l),l) ! centering column by gene content
    end do
+   
+   print '(a)', ' > Creating G matrix...'
+   Gi = matmul(Z, transpose(Z))
+   !CALL DGEMM('N','N',n,n,pos2,ALPHA,Gi,n,transpose(Gi),pos2,BETA,Gi,n)
+   
+   !do i=1,n
+   !   do j=i,n
+   !      do l=1,pos2
+   !         !val = getm(i,j,Gi) + Z(i,l)*Z(j,l)
+   !         !call setm(val,i,j,Gi)
+   !         val = Gi(i,j) + Z(i,l)*Z(j,l)
+   !         Gi(i,j) = val
+   !      end do
+   !   end do
+   !end do
+
    do i=1,n
-      do j=1,n
-         do l=1,pos2
-            val = getm(i,j,Gi) + Z(i,l)*Z(j,l)
-            call setm(val,i,j,Gi)
-         end do
-      end do
-   end do
-   do i=1,n
-      do j=1,n
-         val = getm(i,j,Gi)/sqrt(k(i)*k(j))
-          call setm(val,i,j,Gi)
+      do j=i,n
+         !val = getm(i,j,Gi)/sqrt(k(i)*k(j))
+         !call setm(val,i,j,Gi)
+         val = Gi(i,j)/sqrt(k(i)*k(j))
+         Gi(i,j) = val
+         if(i .ne. j) Gi(j,i) = val
          !if (i<=j) write(io_save,fmt="(2i,f11.3)") i,j, getm(i,j,Gi)
       end do
    end do
-   call cpu_time(t2)
+   !call cpu_time(t2)
    !close(io_save)
-   
+   !print '(a35,f10.2)', 'Time to build G = ',t2-t1
+
    !print*, 'Scaling G matrix'
-   do i=1,len_gen
-       do j=1,len_gen
-           val = getm(i,j,Gi) * wG
-           call setm(val,i,j,Gi)
-           if (i==j) then
-            val = getm(i,j,Gi) + wA22
-            call setm(val,i,j,Gi)
-           endif
-       enddo
+   !print '(a)', ' > Scaling G matrix...'
+   !call cpu_time(t1)
+   do i=1,n
+       !do j=1,len_gen
+       !    val = getm(i,j,Gi) * wG
+       !    call setm(val,i,j,Gi)
+       !    if (i==j) then
+       !     val = getm(i,j,Gi) + wA22
+       !     call setm(val,i,j,Gi)
+       !    endif
+       !enddo
+       !val = getm(i,i,Gi) + 0.001
+       !call setm(val,i,i,Gi)
+       val = Gi(i,i) + 0.001
+       Gi(i,i) = val
+   enddo
+   call cpu_time(t2)
+   !print '(a35,f10.2)', 'Time to scale G = ',t2-t1
+   print '(a35,f10.2)', 'Time to build G = ',t2-t1
+
+   ! Inverting genomic matrix (ija format)
+   !call cpu_time(t1)
+   !Gi_ija = Gi
+   !call fspak90('invert', Gi_ija)
+   !Gi = Gi_ija
+   !call cpu_time(t2)
+   !print '(a35,f10.2)', 'Time to invert G = ',t2-t1
+   !call reset(Gi_ija)
+   !if(n <= 10) call printm(Gi)
+   
+   !do i=1,n
+   !   print'(<n>f7.2)', Gi(i,:)
+   !enddo
+   !stop
+
+   call dense_inversion_mkl(Gi,n)
+   
+   !print*,''
+   !do i=1,n
+   !   print'(<n>f7.2)', Gi(i,:)
+   !enddo
+   !stop
+   
+   print*,'Saving Gi...'
+   open(io_save,file="Gi",status='replace')
+   do i=1,n
+      do j=i,n
+         write(io_save,fmt="(2i,f11.3)") xref(i), xref(j), Gi(i,j) !getm(i,j,Gi)
+      enddo
    enddo
    
-   Gi_ija = Gi
-   call fspak90('invert', Gi_ija)
-   Gi = Gi_ija
-   call reset(Gi_ija)
-
-   print '(a35,f10.2)', 'Time to construct G = ',t2-t1
-   !if(n <= 10) call printm(Gi)
 
 end subroutine
+
 
 ! Function that compute variance of a vector
 function var(x) result(c)
@@ -208,13 +328,16 @@ end function
 
 
 ! Subroutine to create a vector of 2pq
-subroutine createk(m,n,k)
+subroutine createk(m,n)
 implicit none
-real (rh) :: m(:,:), k(:), p, q, pq, val
+real (rh) :: m(:,:), p, q, pq, val
 integer :: i,j,n,io_save=20
+double precision :: t1, t2
+
 
 !open(io_save,file="allele_freq")
 print '(a)', 'Creating scaling (k) vector'
+!t1 = omp_get_wtime()
 call cpu_time(t1)
 do i=1,n
     p=0;val=0
@@ -224,24 +347,28 @@ do i=1,n
         !write(io_save,fmt="(5f15.3)"), p,q,p*q,2*p*q
         val=val+2*p*q
     enddo
-    k(i) = val
+    !k(i) = val
+    k=val
+    exit
 enddo
+!t2 = omp_get_wtime()
 call cpu_time(t2)
 print '(a35,f10.2)', 'Time to compute k  = ',t2-t1
 close(io_save)
 end subroutine
 
 
-subroutine createW(m,W,n,snp)
+subroutine createW(m,n,snp)
 implicit none
-real (rh) :: m(:,:), W(:,:), val
+real (rh) :: m(:,:), val
 integer :: n,snp,i
 
 do i=1,snp
     val = freq(m(:,i),n)
-    W(1,i)=-2*val; W(2,i)=1-2*val; W(3,i)=2-2*val
+    W(0,i)=-2*val; W(1,i)=1-2*val; W(2,i)=2-2*val
 enddo
 end subroutine
+
 
 subroutine defaults_and_checks_GS()
    ! check optional parameters for Genomic Selection
@@ -252,7 +379,7 @@ subroutine defaults_and_checks_GS()
    !do
       !call getoption('SNP_file',n,x,xc)
       !if (n > 0) then ! if SNP_file is present 
-            call setup_genomic(0,0) 
+            call setup_genomic(1,0) 
       !      stop
       !endif ! if SNP_file present
       !
@@ -354,33 +481,37 @@ endsubroutine
 
 subroutine createGmA22_densem(X,Y,XmY,w2,wx2,wy2)
    ! creates Matrix Adelta (wx*X + wy*Y)*w in densem format
-   !
    ! X   = Gi;  wx2 = wGi
    ! Y   = A22; wy2 = wA22i
    ! XmY = GimA22i
 
    !type(densem) :: X,Y,XmY
-   type(densem) :: X,XmY
+   !type(densem) :: X,XmY
    type(sparse_hashm) :: Y
-   integer  :: i,j,n
+
+   real(rh) :: X(:,:)
+   real(rh), intent(inout) :: XmY(:,:)
    real(r8) :: val,w,wx,wy
    real(r8), optional :: w2,wx2,wy2
    real :: t1
+   integer  :: i,j,n
 
+   print*,'Creating GimA22i matrix'
    do i=1,len_gen
       do j=i,len_gen         
-         val = getm(i,j,X)*wx2 + getm(xref(i),xref(j),Y)*wy2
-         call setm(val,i,j,XmY); if(i/=j)call setm(val,j,i,XmY)
+         val = X(i,j)*wx2 + getm(xref(i),xref(j),Y)*wy2
+         XmY(i,j) = val
+         if(i/=j) XmY(j,i)=val
       enddo
    enddo
 
-   !print*,''
-   !print*, 'Ainv'
-   !call printm(Y)
-
-   !print*,''
-   !print*, 'GimA22i'
-   !call printm(XmY)
+   print*,'Saving GimA22i...'
+   open(1541,file="GimA22i",status='replace')
+   do i=1,len_gen
+      do j=i,len_gen
+         write(1541, fmt="(2i5, f15.3)"), xref(i), xref(j), XmY(i,j)
+      enddo
+   enddo
 
 endsubroutine
 
@@ -433,9 +564,8 @@ end function
 ! Read cross reference file
 subroutine read_xref_file(n)
 integer :: i,io,n,tmp(2)
-xref=0
 
-n=0
+xref=0; n=0
 do
   read(unit_xref,*,iostat=io) i
   if( io .ne. 0) exit

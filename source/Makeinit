@@ -1,13 +1,22 @@
 f90=ifort
+
 optf90=-O3 -heap-arrays
 optf77=-O3 -heap-arrays
 optdir=-I
-#mkl=-lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -qopenmp -lpthread
-#mkldist= -Wl,--start-group /lib/intel64/libmkl_intel_lp64.a /lib/intel64/libmkl_intel_thread.a /lib/intel64/libmkl_core.a -Wl,--end-group -openmp -lpthread -static-intel
+
+#mkl=-lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -qopenmp -lpthread -mkl
+mkl = -mkl -qopenmp
 #mkl = -mkl
-mkldist = -mkl -qopenmp -parallel -static-intel
-#openmp = -qopenmp
+
+mkldist = /opt/intel/compilers_and_libraries_2018.3.185/mac/mkl/lib/libmkl_intel_lp64.a /opt/intel/compilers_and_libraries_2018.3.185/mac/mkl/lib/libmkl_intel_thread.a /opt/intel/compilers_and_libraries_2018.3.185/mac/mkl/lib/libmkl_core.a
+#mkldist= -Wl,--start-group /lib/intel64/libmkl_intel_lp64.a /lib/intel64/libmkl_intel_thread.a /lib/intel64/libmkl_core.a -Wl,--end-group -openmp -lpthread -static-intel
+#mkldist = -mkl -qopenmp -parallel -static-intel
+
+openmp = -qopenmp
+
 fpp = -fpp
+
 parallel = -parallel
+
 linkopt =
 
